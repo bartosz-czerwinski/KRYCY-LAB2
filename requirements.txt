@@ -1,0 +1,8 @@
+nfstream==6.5.3
+pandas==2.2.2
+matplotlib==3.9.0
+python-dotenv==1.0.1
+numpy==1.26.4
+scapy==2.5.0
+scikit-learn==1.4.0
+reportlab==3.6.13
