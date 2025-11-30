@@ -3,8 +3,6 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
-
-# Obsługa TTF (polskie znaki)
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 
@@ -13,16 +11,8 @@ class ReportGenerator:
     def __init__(self, output_path="report/flow_report.pdf"):
         self.output_path = output_path
 
-        # Upewnij się, że katalog istnieje
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        # Rejestracja fontu obsługującego UTF-8 + polskie znaki
         font_path = "fonts/DejaVuSans.ttf"
-
-
         pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
-
-        # Style PDF
         self.styles = getSampleStyleSheet()
         self.styles["Normal"].fontName = "DejaVuSans"
         self.styles["Heading3"].fontName = "DejaVuSans"
@@ -47,15 +37,15 @@ class ReportGenerator:
         story.append(table)
         story.append(Spacer(1, 20))
 
-    def generate_pdf(self, stats, unique_src, unique_dst, total_flows, pcap_name):
+    def generate_pdf(self, stats, pcap_name):
         story = []
+        unique_src = stats["unique_hosts_src"]
+        unique_dst = stats["unique_hosts_dst"]
+        total_flows = stats["total_flows"]
 
-        # *** Nagłówek pliku ***
         story.append(Paragraph(f"<b>Statystyki dla pliku: {pcap_name}</b>", self.styles["Heading3"]))
         story.append(Spacer(1, 20))
 
-
-        # --- Sekcje tabel ---
         self.add_table(
             story,
             "Najwięcej flow między parami hostów",
@@ -84,8 +74,6 @@ class ReportGenerator:
             ["Adres docelowy", "Liczba flow"],
             stats["most_active_dst"].values.tolist()
         )
-
-        # --- Podsumowanie ---
         story.append(Paragraph(
             f"Liczba unikalnych hostów źródłowych: <b>{unique_src}</b>",
             self.styles["Normal"]
@@ -99,7 +87,6 @@ class ReportGenerator:
             self.styles["Normal"]
         ))
 
-        # Tworzenie PDF
         doc = SimpleDocTemplate(self.output_path, pagesize=A4)
         doc.build(story)
 

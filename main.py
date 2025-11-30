@@ -50,9 +50,6 @@ if __name__ == "__main__":
     report = ReportGenerator("report/flow_report.pdf")
     pdf_path = report.generate_pdf(
         stats,
-        stats["unique_hosts_src"],
-        stats["unique_hosts_dst"],
-        stats["total_flows"],
         pcap_name
     )
 
