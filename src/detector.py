@@ -1,95 +1,95 @@
 from nfstream import NFStreamer
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from datetime import datetime
-import signal
-import sys
+from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+INPUT_FILE = "scenario_5min.pcap"
 
 class MaliciousDetector:
-    """Klasa przechowująca logikę detekcji"""
-    
     @staticmethod
-    def is_syn_scan(flow):
-        """
-        Wykrywa podejrzane przepływy TCP, które mają tylko flagę SYN 
-        (brak nawiązania połączenia) i celują w nasz 'złośliwy' port.
-        """
-        if flow.protocol != 6:
-            return False
-            
-        if flow.dst_port == 6666:
-            return True
-            
-        return False
+    def detect_exfiltration(flow):
+        """Wykrywa duży transfer wychodzący."""
+        if flow.src2dst_bytes > 1_000_000:
+            if not flow.dst_ip.startswith("192.168.") and not flow.dst_ip.startswith("10."):
+                return f"EXFILTRATION (>1MB)"
+
+    @staticmethod
+    def detect_protocol_mismatch(flow):
+        """Wykrywa ukrywanie usług (SSH na 80)."""
+        if not flow.application_name:
+            return None
+
+        if flow.dst_port == 80 and 'SSH' in flow.application_name:
+            return f"PROTOCOL_MISMATCH (SSH on HTTP)"
+        return None
+
+    @staticmethod
+    def detect_dns_tunneling(flow):
+        """Wykrywa tunelowanie w DNS (duży wolumen)."""
+        if flow.protocol == 17 and flow.dst_port == 53:
+            if flow.bidirectional_bytes > 10000:
+                return "DNS_TUNNELING"
+        return None
 
     @staticmethod
     def analyze_flow(flow):
-        """Główna funkcja oceniająca przepływ"""
-        if MaliciousDetector.is_syn_scan(flow):
-            return "MALICIOUS_SYN_FLOOD"
-        return "BENIGN"
+        """Orkiestrator reguł - sprawdza wszystkie po kolei"""
+        
+        checks = [
+            MaliciousDetector.detect_exfiltration,
+            MaliciousDetector.detect_protocol_mismatch,
+            MaliciousDetector.detect_dns_tunneling,
+        ]
+        
+        for check in checks:
+            alert = check(flow)
+            if alert:
+                return alert 
+        return "SAFE"
 
-detected_alerts = []
+def analyze_and_plot():
+    print(f"[*] Analiza pliku: {INPUT_FILE}...")
+    
+    streamer = NFStreamer(source=INPUT_FILE, statistical_analysis=True)
+    
+    alerts = []
+    
+    for flow in streamer:
+        verdict = MaliciousDetector.analyze_flow(flow)
+        
+        if verdict != "SAFE":
+            print(f"[ALARM] {verdict} | {flow.src_ip} -> {flow.dst_ip}")
+            alerts.append({
+                'timestamp': datetime.fromtimestamp(flow.bidirectional_first_seen_ms / 1000.0),
+                'alert_type': verdict,
+                'count': 1
+            })
 
-def process_traffic(interface_name="lo"):
-    print(f"[*] Nasłuchiwanie na interfejsie: {interface_name}...")
-    print("[*] Naciśnij Ctrl+C, aby zakończyć zbieranie i wygenerować wykres.")
+    if not alerts:
+        print("Nie wykryto żadnych zagrożeń.")
+        return
 
-    # NFStreamer nasłuchuje na żywo
-    # statistical_analysis=True zapewnia dodatkowe metryki
-    my_streamer = NFStreamer(source=interface_name, 
-                             statistical_analysis=True) 
-
-    try:
-        for flow in my_streamer:
-            verdict = MaliciousDetector.analyze_flow(flow)
-            
-            if verdict != "BENIGN":
-                print(f"[ALARM] Wykryto: {verdict} | Src: {flow.src_ip} -> Dst: {flow.dst_port}")
-                
-                detected_alerts.append({
-                    'timestamp': datetime.fromtimestamp(flow.bidirectional_first_seen_ms / 1000.0),
-                    'alert_type': verdict,
-                    'dst_port': flow.dst_port,
-                    'packets': flow.bidirectional_packets
-                })
-                
-    except KeyboardInterrupt:
-        print("\n[!] Zatrzymano zbieranie danych. Generowanie raportu...")
-        generate_report()
-
-def generate_report():
-    if not detected_alerts:
-        print("Brak alertów do wyświetlenia.")
-        sys.exit(0)
-
-    #Tworzenie DataFrame z alertami
-    df = pd.DataFrame(detected_alerts)
+    df = pd.DataFrame(alerts)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
     df.set_index('timestamp', inplace=True)
-    alerts_over_time = df.resample('1S').count()['alert_type']
+    df_grouped = df.groupby('alert_type').resample('15S')['count'].sum().unstack(level=0).fillna(0)
 
-    #Tworzenie wykresu
-    plt.figure(figsize=(12, 6))
+    ax = df_grouped.plot(kind='bar', stacked=True, figsize=(12, 6), rot=0)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    step = 2 
     
-    plt.plot(alerts_over_time.index, alerts_over_time.values, 
-             marker='o', linestyle='-', color='red', label='Liczba alertów')
+    ticks = range(0, len(df_grouped.index), step)
+    ax.set_xticks(ticks)
+
+    labels = [item.strftime('%H:%M:%S') for item in df_grouped.index[::step]]
     
-    plt.title('Detekcja złośliwych przepływów w czasie rzeczywistym', fontsize=16)
-    plt.xlabel('Czas', fontsize=12)
-    plt.ylabel('Liczba wykrytych incydentów', fontsize=12)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
     
-    # Formatowanie osi czasu
-    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-    plt.gcf().autofmt_xdate()
-    
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend()
-    
-    # Wyświetlenie lub zapisanie
-    print("[*] Wyświetlanie wykresu...")
+    plt.title('Wykryte ataki w czasie (interwał 15s)')
+    plt.tight_layout()
     plt.show()
-    sys.exit(0)
 
 if __name__ == "__main__":
-    process_traffic(interface_name="lo")
+    analyze_and_plot()
