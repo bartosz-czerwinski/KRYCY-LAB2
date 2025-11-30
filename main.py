@@ -9,7 +9,7 @@ if __name__ == "__main__":
     flows = analyzer.load_flows()
 
     print("\nWyświetlanie pierwszych flow:")
-    print(flows.iloc[:, :25].head())
+    print(flows.iloc[:, :10].head())
 
     print("\nInformacje o danych flow:")
     print(flows.info())
